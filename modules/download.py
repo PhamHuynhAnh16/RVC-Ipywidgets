@@ -2,6 +2,11 @@ import re
 import os
 import sys
 import shutil
+from yt_dlp import YoutubeDL
+import os
+from urllib.parse import urlparse
+import re
+
 
 sys.path.append(os.getcwd())
 
@@ -130,3 +135,110 @@ def download_model(url=None, model=None):
         print(f"[INFO] An error has occurred: {e}")
     finally:
         shutil.rmtree(download_dir, ignore_errors=True)
+
+
+
+
+def is_valid_url(url):
+    """
+    Validates if the provided string is a valid URL.
+    
+    Args:
+        url: The URL to validate.
+    
+    Returns:
+        True if valid URL, False otherwise.
+    """
+    url_pattern = re.compile(
+        r'^(https?://)?'  # http:// or https://
+        r'((([A-Za-z0-9-]+\.)+[A-Za-z]{2,6})|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(:[0-9]{1,5})?(/.*)?$'  # optional port and path
+    )
+    return bool(url_pattern.match(url))
+
+def sanitize_filename(filename):
+    """
+    Sanitizes filename by removing invalid characters.
+    
+    Args:
+        filename: The filename to sanitize.
+    
+    Returns:
+        Sanitized filename.
+    """
+    return re.sub(r'[<>:"/\\|?*]', '', filename)
+
+def download_audio(url, output_path='.', audio_format='mp3', quality='192'):
+    """
+    Downloads audio from a YouTube video URL with enhanced error handling and progress feedback.
+
+    Args:
+        url: The URL of the YouTube video.
+        output_path: Directory to save the downloaded audio. Defaults to current directory.
+        audio_format: Desired audio format (mp3, wav, flac, etc.). Defaults to 'mp3'.
+        quality: Audio quality in kbps. Defaults to '192'.
+
+    Returns:
+        Path to the downloaded file or None if download fails.
+    """
+    # Validate URL
+    if not is_valid_url(url):
+        print("[Error]: Invalid URL provided.")
+        return None
+
+    # Validate and create output directory
+    output_path = os.path.abspath(output_path)
+    try:
+        os.makedirs(output_path, exist_ok=True)
+    except OSError as e:
+        print(f"[Error]: Failed to create output directory '{output_path}': {e}")
+        return None
+
+    # Validate audio format
+    valid_formats = ['mp3', 'wav', 'flac', 'm4a', 'ogg']
+    if audio_format not in valid_formats:
+        print(f"Error: Invalid audio format. Supported formats: {', '.join(valid_formats)}")
+        return None
+
+    # Validate quality
+    try:
+        quality_int = int(quality)
+        if not 32 <= quality_int <= 320:
+            print("[Error]: Quality must be between 32 and 320 kbps.")
+            return None
+    except ValueError:
+        print("[Error]: Quality must be a valid number.")
+        return None
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': audio_format,
+            'preferredquality': quality,
+        }],
+        'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        'cookiefile': 'assets/ytdl.txt' if os.path.exists('assets/ytdl.txt') else None,
+        'quiet': False,
+        'progress_hooks': [lambda d: print(f"Downloading: {d['downloaded_bytes'] / d['total_bytes'] * 100:.1f}%"
+                                        if d['status'] == 'downloading' else 
+                                        "Download complete!" if d['status'] == 'finished' else '')],
+        'noplaylist': True,  # Download single video, not playlist
+        'retries': 3,  # Retry on failure
+        'fragment_retries': 3,
+        'socket_timeout': 30,
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            title = sanitize_filename(info_dict.get('title', 'audio'))
+            output_file = os.path.join(output_path, f"{title}.{audio_format}")
+            print(f"[INFO]: Successfully downloaded: {output_file}")
+            return output_file
+    except Exception as e:
+        print(f"[ERROR]: AError during download: {e}")
+        return None
+
